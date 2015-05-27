@@ -1072,7 +1072,7 @@ uint8_t atsha204Class::sha204e_configure_derive_key()
 /**
 *	Derive Key command
 */
-uint8_t sha204m_derive_key(uint8_t *tx_buffer, uint8_t *rx_buffer,
+uint8_t atsha204Class::sha204m_derive_key(uint8_t *tx_buffer, uint8_t *rx_buffer,
 			uint8_t random, uint8_t target_key, uint8_t *mac)
 {
 	if (!tx_buffer || !rx_buffer || (random & ~DERIVE_KEY_RANDOM_FLAG)
@@ -1094,6 +1094,147 @@ uint8_t sha204m_derive_key(uint8_t *tx_buffer, uint8_t *rx_buffer,
 	else
 		tx_buffer[SHA204_COUNT_IDX] = DERIVE_KEY_COUNT_SMALL;
 
+		
 	return sha204c_send_and_receive(&tx_buffer[0], DERIVE_KEY_RSP_SIZE, &rx_buffer[0],
 				DERIVE_KEY_DELAY, DERIVE_KEY_EXEC_MAX - DERIVE_KEY_DELAY);
+}
+
+
+uint8_t atsha204Class::sha204m_nonce(uint8_t *tx_buffer, uint8_t *rx_buffer, uint8_t mode, uint8_t *numin)
+{
+	uint8_t rx_size;
+
+	if (!tx_buffer || !rx_buffer || !numin
+				|| (mode > NONCE_MODE_PASSTHROUGH) || (mode == NONCE_MODE_INVALID))
+		// no null pointers allowed
+		// mode has to match an allowed Nonce mode.
+		return SHA204_BAD_PARAM;
+
+	tx_buffer[SHA204_OPCODE_IDX] = SHA204_NONCE;
+	tx_buffer[NONCE_MODE_IDX] = mode;
+
+	// 2. parameter is 0.
+	tx_buffer[NONCE_PARAM2_IDX] =
+	tx_buffer[NONCE_PARAM2_IDX + 1] = 0;
+
+	if (mode != NONCE_MODE_PASSTHROUGH)
+	{
+		memcpy(&tx_buffer[NONCE_INPUT_IDX], numin, NONCE_NUMIN_SIZE);
+		tx_buffer[SHA204_COUNT_IDX] = NONCE_COUNT_SHORT;
+		rx_size = NONCE_RSP_SIZE_LONG;
+	}
+	else
+	{
+		memcpy(&tx_buffer[NONCE_INPUT_IDX], numin, NONCE_NUMIN_SIZE_PASSTHROUGH);
+		tx_buffer[SHA204_COUNT_IDX] = NONCE_COUNT_LONG;
+		rx_size = NONCE_RSP_SIZE_SHORT;
+	}
+
+	return sha204c_send_and_receive(&tx_buffer[0], rx_size, &rx_buffer[0],
+				NONCE_DELAY, NONCE_EXEC_MAX - NONCE_DELAY);
+}
+
+uint8_t atsha204Class::sha204e_configure_diversify_key(void)
+{
+	// declared as "volatile" for easier debugging
+	volatile uint8_t ret_code;
+	
+	uint8_t command[NONCE_COUNT_LONG];
+	uint8_t response[SHA204_RSP_SIZE_MIN];
+	uint8_t data_load[NONCE_NUMIN_SIZE_PASSTHROUGH];
+
+	// Configure key. -> I did this manually
+	ret_code = sha204e_configure_key();
+	if (ret_code != SHA204_SUCCESS)
+		return ret_code;
+
+	
+	// Read serial number and pad it.
+	memset(data_load, 0, sizeof(data_load));
+	ret_code = getSerialNumber(data_load);
+	if (ret_code != SHA204_SUCCESS) {
+		//sha204p_sleep();
+		return ret_code;
+	}
+	
+	//  Put padded serial number into TempKey (fixed Nonce).
+	ret_code = sha204m_nonce(command, response, NONCE_MODE_PASSTHROUGH, data_load);
+	if (ret_code != SHA204_SUCCESS) {
+		//sha204p_sleep();
+		return ret_code;
+	}
+	
+	//  Send DeriveKey command.
+	ret_code = sha204m_derive_key(command, response, DERIVE_KEY_RANDOM_FLAG, 1, NULL);
+	/*
+#ifdef SHA204_EXAMPLE_CONFIG_WITH_LOCK
+	sha204p_sleep();
+
+	if (ret_code != SHA204_SUCCESS)
+		return ret_code;
+
+	ret_code = sha204e_lock_config_zone(SHA204_HOST_ADDRESS);
+#endif
+*/
+	// Put client device to sleep.
+	//sha204p_sleep();
+	
+	return ret_code;
+}
+
+
+uint8_t atsha204Class::sha204m_gen_dig(uint8_t *tx_buffer, uint8_t *rx_buffer,
+			uint8_t zone, uint8_t key_id, uint8_t *other_data)
+{
+	if (!tx_buffer || !rx_buffer || (zone > GENDIG_ZONE_DATA))
+		// no null pointers allowed
+		// zone has to match a zone (Config, Data, or OTP zone)
+		return SHA204_BAD_PARAM;
+
+	if (((zone == GENDIG_ZONE_OTP) && (key_id > SHA204_OTP_BLOCK_MAX))
+				|| ((zone == GENDIG_ZONE_DATA) && (key_id > SHA204_KEY_ID_MAX)))
+		// If OTP zone is used only valid OTP block values can be used.
+		// If Data zone is used key_id > 15 is not allowed.
+		return SHA204_BAD_PARAM;
+
+	tx_buffer[SHA204_OPCODE_IDX] = SHA204_GENDIG;
+	tx_buffer[GENDIG_ZONE_IDX] = zone;
+	tx_buffer[GENDIG_KEYID_IDX] = key_id;
+	tx_buffer[GENDIG_KEYID_IDX + 1] = 0;
+	if (other_data != NULL)
+	{
+		memcpy(&tx_buffer[GENDIG_DATA_IDX], other_data, GENDIG_OTHER_DATA_SIZE);
+		tx_buffer[SHA204_COUNT_IDX] = GENDIG_COUNT_DATA;
+	}
+	else
+		tx_buffer[SHA204_COUNT_IDX] = GENDIG_COUNT;
+
+	return sha204c_send_and_receive(&tx_buffer[0], GENDIG_RSP_SIZE, &rx_buffer[0],
+				GENDIG_DELAY, GENDIG_EXEC_MAX - GENDIG_DELAY);
+
+}
+
+uint8_t atsha204Class::sha204m_mac(uint8_t *tx_buffer, uint8_t *rx_buffer,
+			uint8_t mode, uint16_t key_id, uint8_t *challenge)
+{
+	if (!tx_buffer || !rx_buffer || (mode & ~MAC_MODE_MASK)
+				|| (!(mode & MAC_MODE_BLOCK2_TEMPKEY) && !challenge))
+		// no null pointers allowed
+		// mode has to match an allowed MAC mode.
+		// If mode requires challenge data challenge cannot be null.
+		return SHA204_BAD_PARAM;
+
+	tx_buffer[SHA204_COUNT_IDX] = MAC_COUNT_SHORT;
+	tx_buffer[SHA204_OPCODE_IDX] = SHA204_MAC;
+	tx_buffer[MAC_MODE_IDX] = mode;
+	tx_buffer[MAC_KEYID_IDX] = key_id & 0xFF;
+	tx_buffer[MAC_KEYID_IDX + 1] = key_id >> 8;
+	if ((mode & MAC_MODE_BLOCK2_TEMPKEY) == 0)
+	{
+		memcpy(&tx_buffer[MAC_CHALLENGE_IDX], challenge, MAC_CHALLENGE_SIZE);
+		tx_buffer[SHA204_COUNT_IDX] = MAC_COUNT_LONG;
+	}
+
+	return sha204c_send_and_receive(&tx_buffer[0], MAC_RSP_SIZE, &rx_buffer[0],
+				MAC_DELAY, MAC_EXEC_MAX - MAC_DELAY);
 }

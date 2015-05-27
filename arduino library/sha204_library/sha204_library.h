@@ -281,6 +281,28 @@
 
 #define SHA204_CONFIG_SIZE	88
 
+/** \name Definitions for the CheckMac Command
+@{ */
+#define CHECKMAC_MODE_IDX               SHA204_PARAM1_IDX      //!< CheckMAC command index for mode
+#define CHECKMAC_KEYID_IDX              SHA204_PARAM2_IDX      //!< CheckMAC command index for key identifier
+#define CHECKMAC_CLIENT_CHALLENGE_IDX   SHA204_DATA_IDX        //!< CheckMAC command index for client challenge
+#define CHECKMAC_CLIENT_RESPONSE_IDX    (37)                   //!< CheckMAC command index for client response
+#define CHECKMAC_DATA_IDX               (69)                   //!< CheckMAC command index for other data
+#define CHECKMAC_COUNT                  (84)                   //!< CheckMAC command packet size
+#define CHECKMAC_MODE_CHALLENGE         ((uint8_t) 0x00)       //!< CheckMAC mode       0: first SHA block from key id
+#define CHECKMAC_MODE_BLOCK2_TEMPKEY    ((uint8_t) 0x01)       //!< CheckMAC mode bit   0: second SHA block from TempKey
+#define CHECKMAC_MODE_BLOCK1_TEMPKEY    ((uint8_t) 0x02)       //!< CheckMAC mode bit   1: first SHA block from TempKey
+#define CHECKMAC_MODE_SOURCE_FLAG_MATCH ((uint8_t) 0x04)       //!< CheckMAC mode bit   2: match TempKey.SourceFlag
+#define CHECKMAC_MODE_INCLUDE_OTP_64    ((uint8_t) 0x20)       //!< CheckMAC mode bit   5: include first 64 OTP bits
+#define CHECKMAC_MODE_MASK              ((uint8_t) 0x27)       //!< CheckMAC mode bits 3, 4, 6, and 7 are 0.
+#define CHECKMAC_CLIENT_CHALLENGE_SIZE  (32)                   //!< CheckMAC size of client challenge
+#define CHECKMAC_CLIENT_RESPONSE_SIZE   (32)                   //!< CheckMAC size of client response
+#define CHECKMAC_OTHER_DATA_SIZE        (13)                   //!< CheckMAC size of "other data"
+#define CHECKMAC_CLIENT_COMMAND_SIZE    ( 4)                   //!< CheckMAC size of client command header size inside "other data"
+/** @} */
+
+#define SHA204_SUCCESS					0
+
 class atsha204Class
 {
 private:
@@ -321,6 +343,15 @@ public:
 	uint8_t sha204e_lock_config_zone();
 	uint8_t sha204e_configure_derive_key();
 	uint8_t sha204m_lock(uint8_t *tx_buffer, uint8_t *rx_buffer, uint8_t zone, uint16_t summary);
+	uint8_t sha204m_derive_key(uint8_t *tx_buffer, uint8_t *rx_buffer,
+			uint8_t random, uint8_t target_key, uint8_t *mac);
+	uint8_t sha204m_nonce(uint8_t *tx_buffer, uint8_t *rx_buffer, uint8_t mode, uint8_t *numin);
+	uint8_t sha204m_gen_dig(uint8_t *tx_buffer, uint8_t *rx_buffer,
+			uint8_t zone, uint8_t key_id, uint8_t *other_data);
+	uint8_t sha204e_configure_diversify_key(void);
+	uint8_t sha204m_mac(uint8_t *tx_buffer, uint8_t *rx_buffer,
+			uint8_t mode, uint16_t key_id, uint8_t *challenge);
+
 };
 
 #endif
